@@ -68,6 +68,7 @@ void ms_sleep(unsigned int milli)
 }
 
 void* catch_signal(void* arg){
+    alarm(1);
     employee_t* arguments = arg;
     int sig;
     while(1){
@@ -77,6 +78,25 @@ void* catch_signal(void* arg){
             *(arguments->do_work) = 0;
             pthread_mutex_unlock(arguments->do_work_mx);
             break;
+        }
+        if(sig == SIGALRM){
+            alarm(1);
+            for(int i = 0 ; i < arguments->num_shelves; i++){
+                pthread_mutex_lock(&arguments->shelves_mx[i]);
+            }
+            print_shop(arguments->shelves, arguments->num_shelves);
+            for(int i = 0 ; i < arguments->num_shelves; i++){
+                pthread_mutex_unlock(&arguments->shelves_mx[i]);
+            }
+        }
+        if(sig == SIGUSR1){
+            for(int i = 0 ; i < arguments->num_shelves; i++){
+                pthread_mutex_lock(&arguments->shelves_mx[i]);
+            }
+            shuffle(arguments->shelves, arguments->num_shelves);
+            for(int i = 0 ; i < arguments->num_shelves; i++){
+                pthread_mutex_unlock(&arguments->shelves_mx[i]);
+            }
         }
     }
     return NULL;
@@ -117,6 +137,8 @@ int main(int argc, char* argv[]) {
     sigset_t oldMask, newMask;
     sigemptyset(&newMask);
     sigaddset(&newMask, SIGINT);
+    sigaddset(&newMask, SIGALRM);
+    sigaddset(&newMask, SIGUSR1);
     if (pthread_sigmask(SIG_BLOCK, &newMask, &oldMask))
         ERR("SIG_BLOCK error");
     if(argc != 3){
@@ -154,6 +176,9 @@ int main(int argc, char* argv[]) {
     workers[num_workers].do_work = &do_work;
     workers[num_workers].mask = &newMask;
     workers[num_workers].do_work_mx = &do_word_mx;
+    workers[num_workers].shelves_mx = shelves_mx;
+    workers[num_workers].num_shelves = num_prod;
+    workers[num_workers].shelves = shelves;
     pthread_create(&(workers[num_workers].tid), NULL, catch_signal, &workers[num_workers]);
     for(int i = 0; i < num_workers+1; i++){
         if(pthread_join(workers[i].tid, NULL) != 0){

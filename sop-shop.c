@@ -29,6 +29,9 @@ typedef struct employee
     int* do_work;
     pthread_mutex_t* do_work_mx;
     sigset_t *mask;
+    struct employee* workers;
+    int num_workers;
+    int* workers_state;
 }employee_t;
 
 
@@ -67,10 +70,15 @@ void ms_sleep(unsigned int milli)
         ERR("nanosleep");
 }
 
+void release_mutex(void* arg){
+    pthread_mutex_unlock(arg);
+}
+
 void* catch_signal(void* arg){
     alarm(1);
     employee_t* arguments = arg;
     int sig;
+    int canceled_workers = 0;
     while(1){
         sigwait(arguments->mask, &sig);
         if(sig == SIGINT){
@@ -96,6 +104,17 @@ void* catch_signal(void* arg){
             shuffle(arguments->shelves, arguments->num_shelves);
             for(int i = 0 ; i < arguments->num_shelves; i++){
                 pthread_mutex_unlock(&arguments->shelves_mx[i]);
+            }
+        }
+        if(sig == SIGUSR2){
+            int cancel = rand_r(&arguments->seed)%arguments->num_workers;
+            while(arguments->workers_state[cancel] == 1){
+                cancel = rand_r(&arguments->seed)%arguments->num_workers;
+            }
+            pthread_cancel(arguments->workers[cancel].tid);
+            canceled_workers++;
+            if(canceled_workers == arguments->num_workers){
+                break;
             }
         }
     }
@@ -124,7 +143,11 @@ void* start_shift(void* arg){
         pthread_mutex_lock(&argument->shelves_mx[product2]);
         if(argument->shelves[product2] < argument->shelves[product1]){
             SWAP(argument->shelves[product1], argument->shelves[product2]);
+            pthread_cleanup_push(release_mutex, &argument->shelves_mx[product1]);
+            pthread_cleanup_push(release_mutex, &argument->shelves_mx[product2]);
             ms_sleep(50);
+            pthread_cleanup_pop(0);
+            pthread_cleanup_pop(0);
         }
         pthread_mutex_unlock(&argument->shelves_mx[product1]);
         pthread_mutex_unlock(&argument->shelves_mx[product2]);
@@ -139,6 +162,7 @@ int main(int argc, char* argv[]) {
     sigaddset(&newMask, SIGINT);
     sigaddset(&newMask, SIGALRM);
     sigaddset(&newMask, SIGUSR1);
+    sigaddset(&newMask, SIGUSR2);
     if (pthread_sigmask(SIG_BLOCK, &newMask, &oldMask))
         ERR("SIG_BLOCK error");
     if(argc != 3){
@@ -152,6 +176,7 @@ int main(int argc, char* argv[]) {
     employee_t* workers = calloc(sizeof(employee_t), num_workers+1);
     int* shelves = calloc(sizeof(int), num_prod);
     pthread_mutex_t* shelves_mx = calloc(sizeof(pthread_mutex_t), num_prod);
+    int* workers_state = calloc(sizeof(int), num_workers);
     int do_work = 1;
     for(int i = 0; i < num_prod; i++){
         shelves[i] = i;
@@ -173,12 +198,16 @@ int main(int argc, char* argv[]) {
             ERR("pthread_create");
         }
     }
+    workers[num_workers].workers_state = workers_state;
+    workers[num_workers].workers = workers;
     workers[num_workers].do_work = &do_work;
     workers[num_workers].mask = &newMask;
     workers[num_workers].do_work_mx = &do_word_mx;
     workers[num_workers].shelves_mx = shelves_mx;
     workers[num_workers].num_shelves = num_prod;
     workers[num_workers].shelves = shelves;
+    workers[num_workers].seed = rand();
+    workers[num_workers].num_workers = num_workers;
     pthread_create(&(workers[num_workers].tid), NULL, catch_signal, &workers[num_workers]);
     for(int i = 0; i < num_workers+1; i++){
         if(pthread_join(workers[i].tid, NULL) != 0){
@@ -188,8 +217,9 @@ int main(int argc, char* argv[]) {
     print_shop(shelves, num_prod);
     free(workers);
     free(shelves);
+    free(workers_state);
     for(int i = 0; i<num_prod; i++){
-        pthread_mutex_destroy(shelves_mx);
+        pthread_mutex_destroy(&shelves_mx[i]);
     }
     free(shelves_mx);
 }

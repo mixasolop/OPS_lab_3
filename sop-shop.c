@@ -19,7 +19,12 @@
 
 typedef struct employee
 {
+    unsigned int seed;
+    int id;
     pthread_t tid;
+    int* shelves;
+    pthread_mutex_t* shelves_mx;
+    int num_shelves;
 }employee_t;
 
 
@@ -59,8 +64,27 @@ void ms_sleep(unsigned int milli)
 }
 
 void* start_shift(void* arg){
-    employee_t* argment = arg;
-    printf("Worker %ld: Reporting for the night shift!\n", argment->tid);
+    employee_t* argument = arg;
+    printf("Worker %d: Reporting for the night shift!\n", argument->id);
+    for(int i = 0; i < 10; i++){
+        int product1 = rand_r(&argument->seed)%argument->num_shelves;
+        int product2 = rand_r(&argument->seed)%argument->num_shelves;
+        while(product1 == product2){
+            product2 = rand_r(&argument->seed)%argument->num_shelves;
+        }
+        if(product1 > product2){
+            SWAP(product1, product2);
+        }
+        pthread_mutex_lock(&argument->shelves_mx[product1]);
+        pthread_mutex_lock(&argument->shelves_mx[product2]);
+        if(argument->shelves[product2] < argument->shelves[product1]){
+            SWAP(argument->shelves[product1], argument->shelves[product2]);
+            ms_sleep(50);
+        }
+        pthread_mutex_unlock(&argument->shelves_mx[product1]);
+        pthread_mutex_unlock(&argument->shelves_mx[product2]);
+    }
+    ms_sleep(100);
     return NULL;
 }
 
@@ -74,11 +98,36 @@ int main(int argc, char* argv[]) {
         usage(argc, argv);
     }
     employee_t* workers = calloc(sizeof(employee_t), num_workers);
+    int* shelves = calloc(sizeof(int), num_prod);
+    pthread_mutex_t* shelves_mx = calloc(sizeof(pthread_mutex_t), num_prod);
+    for(int i = 0; i < num_prod; i++){
+        shelves[i] = i;
+        pthread_mutex_init(&shelves_mx[i], NULL);
+    }
+    shuffle(shelves, num_prod);
+    srand(time(NULL));
+    print_shop(shelves, num_prod);
     for(int i = 0; i < num_workers; i++){
-        pthread_create(&(workers[i].tid), NULL, start_shift, &workers[i]);
+        workers[i].num_shelves = num_prod;
+        workers[i].shelves = shelves;
+        workers[i].shelves_mx = shelves_mx;
+        workers[i].seed = rand();
+        workers[i].id = i;
+        if(pthread_create(&(workers[i].tid), NULL, start_shift, &workers[i]) != 0){
+            ERR("pthread_create");
+        }
+
     }
     for(int i = 0; i < num_workers; i++){
-        pthread_join(workers[i].tid, NULL);
+        if(pthread_join(workers[i].tid, NULL) != 0){
+            ERR("pthread_join");
+        }
     }
+    print_shop(shelves, num_prod);
     free(workers);
+    free(shelves);
+    for(int i = 0; i<num_prod; i++){
+        pthread_mutex_destroy(shelves_mx);
+    }
+    free(shelves_mx);
 }

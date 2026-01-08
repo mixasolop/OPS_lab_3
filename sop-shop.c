@@ -16,6 +16,13 @@
         y = __x;           \
     } while (0)
 
+
+typedef struct employee
+{
+    pthread_t tid;
+}employee_t;
+
+
 void usage(int argc, char* argv[])
 {
     printf("%s N M\n", argv[0]);
@@ -51,4 +58,27 @@ void ms_sleep(unsigned int milli)
         ERR("nanosleep");
 }
 
-int main(int argc, char* argv[]) {}
+void* start_shift(void* arg){
+    employee_t* argment = arg;
+    printf("Worker %ld: Reporting for the night shift!\n", argment->tid);
+    return NULL;
+}
+
+int main(int argc, char* argv[]) {
+    if(argc != 3){
+        usage(argc, argv);
+    }
+    int num_prod = atoi(argv[1]);
+    int num_workers = atoi(argv[2]);
+    if(num_prod < 8 || num_prod > 256 || num_workers < 1 || num_workers > 16){
+        usage(argc, argv);
+    }
+    employee_t* workers = calloc(sizeof(employee_t), num_workers);
+    for(int i = 0; i < num_workers; i++){
+        pthread_create(&(workers[i].tid), NULL, start_shift, &workers[i]);
+    }
+    for(int i = 0; i < num_workers; i++){
+        pthread_join(workers[i].tid, NULL);
+    }
+    free(workers);
+}
